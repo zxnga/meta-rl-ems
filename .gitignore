@@ -4,6 +4,7 @@ meta_policy_weights/
 papers/
 sb_logs/
 weights/
+__pycache__
 
 src/actor_critic.py
 src/legacy.py
@@ -12,3 +13,5 @@ src/meta_critic.py
 *.png
 *.pkl
 *.ipynb
+
+.gitignore
