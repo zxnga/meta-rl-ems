@@ -1,0 +1,10 @@
+.venv/
+figs/
+meta_policy_weights/
+papers/
+sb_logs/
+weights/
+
+*.png
+*.pkl
+*.ipynb
