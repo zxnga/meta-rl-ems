@@ -5,6 +5,10 @@ papers/
 sb_logs/
 weights/
 
+src/actor_critic.py
+src/legacy.py
+src/meta_critic.py
+
 *.png
 *.pkl
 *.ipynb
