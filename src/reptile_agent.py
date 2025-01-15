@@ -1,5 +1,6 @@
 from typing import Any, ClassVar, Dict, Optional, Tuple, Type, TypeVar, Union, List, Callable
 
+import os
 import math
 import numpy as np
 import torch as th
@@ -34,7 +35,7 @@ class ReptileAgent:
         use_meta_optimizer: bool = False,
         meta_optimizer: th.optim = th.optim.Adam,
         inner_loop_params: Optional[Dict[str, Any]] = {},
-        save_frequency: int = 0,
+        save_frequency: int = 1,
         save_dir: str = ('./meta_policy_weights'),
         experience_name: str = '',
         ):
@@ -95,8 +96,9 @@ class ReptileAgent:
         self.experience_name = get_unique_experience_name(experience_name, self.save_dir)
 
     def save_meta_weights(self, meta_iteration: int):
-        save_path = os.path.join(self.save_dir, self.experience_name,
-                    f"meta_policy_step_{meta_iteration + 1}.pth")
+        save_dir = os.path.join(self.save_dir, self.experience_name)
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, f"meta_policy_step_{meta_iteration + 1}.pth")
         th.save(self.meta_policy.state_dict(), save_path)
     
     def get_model_parameters_from_name(self, target_layers):
@@ -248,7 +250,7 @@ class ReptileAgent:
             self.task_generator.reset_history()
         
         for meta_iteration in tqdm(range(self.outer_steps), desc="Meta-training progress"):
-            # print(meta_iteration)
+            print(meta_iteration)
             task_models = []
             task_batch = [
                 self.task_generator.get_task(meta_iteration*self.task_batch_size+i)
@@ -259,11 +261,11 @@ class ReptileAgent:
                 # 1. load meta weights into task specific model
                 exclude_layers = []
                 task_model = self.instanciate_model(current_task)
-                
+
                 if not self.use_actor_meta_weights and self.actor_layers:
                     # we exclude actor weights from initialization (use random weights)
                     exclude_layers, _ = self.get_model_parameters_from_name(self.actor_layers)
-                load_weights_from_source(self.meta_policy, task_model, exclude_layers, detach=True)
+                load_weights_from_source(self.meta_policy, task_model.policy, exclude_layers, detach=True)
 
                 if self.re_use_actors:
                     task_actor = actors.get(first_occurence)
@@ -275,7 +277,7 @@ class ReptileAgent:
                 task_models.append(task_model)
                 if self.re_use_actors:
                     # 3. store actor
-                    actors[first_occurence] = extract_layer_weights(task_model, self.actor_layers, detach=True)
+                    actors[first_occurence] = extract_layer_weights(task_model.policy, self.actor_layers, detach=True)
             
             # Perform the Reptile update based on the entire batch of tasks
             self.reptile_update(task_models)

@@ -52,7 +52,7 @@ class TaskGenerator:
         :param meta_step: The current meta-iteration step, required if tasks is a list of tasks.
         :return: A task instance.
 
-        TODO: revisit tasks when using lists of tasks, update storing of meta step using list
+        TODO: revisit tasks when using lists of tasks, update storing of meta step using list of tasks
         """
         # Option 1: Use a predefined list of tasks
         if self.tasks is not None:
