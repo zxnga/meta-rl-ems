@@ -60,8 +60,10 @@ class ReptileAgent:
         self.meta_lr = meta_lr
         self.task_batch_size = task_batch_size
         if task_batch_size > 1:
+            prev_outer_steps = outer_steps
             self.outer_steps = math.ceil(outer_steps / task_batch_size)
-            print(f'Carefull ! Task_batch_size > 1. Total number of outer loop steps are: {self.outer_steps} !')
+            print(f'Carefull ! Task_batch_size > 1. Total number of outer loop steps are: {prev_outer_steps}/{task_batch_size}={self.outer_steps} !')
+            
 
         self.rl_algorithm = rl_algorithm
         self.rl_algo_kwargs = rl_algo_kwargs
@@ -250,7 +252,7 @@ class ReptileAgent:
             self.task_generator.reset_history()
         
         for meta_iteration in tqdm(range(self.outer_steps), desc="Meta-training progress"):
-            print(meta_iteration)
+            # print(meta_iteration)
             task_models = []
             task_batch = [
                 self.task_generator.get_task(meta_iteration*self.task_batch_size+i)
@@ -271,7 +273,7 @@ class ReptileAgent:
                     task_actor = actors.get(first_occurence)
                     if task_actor:
                     # 2. load actor weights
-                        load_weights_from_source(task_actor, task_model, detach=True)
+                        load_weights_from_source(task_actor, task_model.policy, detach=True)
 
                 self.update_to_task(task_model)     # Perform inner loop adaptation on the task
                 task_models.append(task_model)

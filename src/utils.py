@@ -74,22 +74,43 @@ def load_weights_from_source(
     target_model.load_state_dict(target_state_dict)
 
 
-def extract_layer_weights(model, layer_name, detach=True):
+def extract_layer_weights(
+    model: Module,
+    layer_name: Union[str, List[str]],
+    detach: bool = True
+) -> Dict[str, torch.Tensor]:
     """
-    Extract the weights of a specific layer from a model and return them as a dictionary.
+    Extract the weights of specific layers from a model and return them as a dictionary.
 
     Args:
-        model (nn.Module): The model containing the layer.
-        layer_name (str): The name of the layer to extract.
+        model (nn.Module): The model containing the layers.
+        layer_name (Union[str, List[str]]): The name(s) of the layer(s) to extract. 
+            Can be a single string or a list of strings.
         detach (bool): Whether to detach the weights from the computation graph.
 
     Returns:
-        dict: A dictionary containing the extracted weights.
+        Dict[str, torch.Tensor]: A dictionary containing the extracted weights.
+                                 Keys are parameter names, values are tensors.
     """
-    state_dict = model.state_dict()
-    if detach:
-        layer_weights = {k: v.clone().detach() for k, v in state_dict.items() if k.startswith(layer_name)}
+    # If layer_name is a string, convert it to a list for uniform processing
+    if isinstance(layer_name, str):
+        layer_name_list = [layer_name]
     else:
-        layer_weights = {k: v.clone() for k, v in state_dict.items() if k.startswith(layer_name)}
+        layer_name_list = layer_name
+
+    state_dict = model.state_dict()
+
+    if detach:
+        layer_weights = {
+            k: v.clone().detach()
+            for k, v in state_dict.items()
+            if any(k.startswith(name) for name in layer_name_list)
+        }
+    else:
+        layer_weights = {
+            k: v.clone()
+            for k, v in state_dict.items()
+            if any(k.startswith(name) for name in layer_name_list)
+        }
 
     return layer_weights
