@@ -44,7 +44,7 @@ class ReptileAgent:
         assert not re_use_actors or actor_layers, "actor_layers is required when re_use_actors is True"
         if 'n_steps' in rl_algo_kwargs:
             if 'n_steps' in rl_algo_kwargs and inner_steps > rl_algo_kwargs['n_steps']:
-                print(f"Warning inner_steps({inner_steps}) > n_steps({rl_algo_kwargs['n_steps']}) !, A supplementary round of updates will be done.")
+                print(f"Warning inner_steps({inner_steps}) > n_steps({rl_algo_kwargs['n_steps']}) ! A supplementary round of updates will be done.")
                 rl_algo_kwargs['n_steps'] = inner_steps
             else:
                 rl_algo_kwargs['n_steps'] = inner_steps
@@ -96,6 +96,8 @@ class ReptileAgent:
 
         self.save_dir = save_dir
         self.experience_name = get_unique_experience_name(experience_name, self.save_dir)
+
+        print(f"Total number of timesteps in the env is: {outer_steps*inner_steps:_}")
 
     def save_meta_weights(self, meta_iteration: int):
         save_dir = os.path.join(self.save_dir, self.experience_name)
