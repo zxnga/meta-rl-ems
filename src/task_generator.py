@@ -45,7 +45,7 @@ class TaskGenerator:
         self.selected_tasks = []
         self.revisit_counter = 0
 
-    def get_task(self, meta_step):
+    def get_task(self, meta_step, seed=None):
         """
         Generate or retrieve a task based on the revisit ratio and sampling method.
 
@@ -64,7 +64,7 @@ class TaskGenerator:
                 task, info = random.choice(self.tasks)
             elif self.sampling_method == "weighted":            
                 task, info = random.choices(self.tasks, weights=self.sampling_weights, k=1)[0]
-            selected_tasks.append({'task':task, 'task_info':info, 'meta_step': [meta_step], 'seed': None})
+            self.selected_tasks.append({'task':task, 'task_info':info, 'meta_step': [meta_step], 'seed': None})
             return task, info, None
 
         # Option 2: Dynamically generate tasks using the callable
@@ -80,11 +80,12 @@ class TaskGenerator:
 
             else:
                 # Generate a new seed and create a new task? do not revisit inentionally
-                new_seed = random.randint(0, 2**32 - 1)
-                while new_seed in [i['seed'] for i in self.selected_tasks]:
+                if not seed:
                     new_seed = random.randint(0, 2**32 - 1)
-                random.seed(new_seed)
-                task, info = self.task_callable(random_seed=new_seed, **self.task_callable_params)
+                    while new_seed in [i['seed'] for i in self.selected_tasks]:
+                        new_seed = random.randint(0, 2**32 - 1)
+                    random.seed(new_seed)
+                task, info = self.task_callable(random_seed=seed, **self.task_callable_params)
                 
                 # Store the seed and task for future revisits
                 self.selected_tasks.append({'task':task, 'seed':new_seed, 'task_info':info, 'meta_step': [meta_step]})

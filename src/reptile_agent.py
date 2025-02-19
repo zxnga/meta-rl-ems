@@ -96,6 +96,7 @@ class ReptileAgent:
 
         self.save_dir = save_dir
         self.experience_name = get_unique_experience_name(experience_name, self.save_dir)
+        print(f"Meta-weights saved at: {self.save_dir} under the name: {self.experience_name}")
 
         print(f"Total number of timesteps in the env is: {outer_steps*inner_steps:_}")
 
