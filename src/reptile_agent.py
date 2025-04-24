@@ -36,7 +36,8 @@ class ReptileAgent:
         meta_optimizer: th.optim = th.optim.Adam,
         inner_loop_params: Optional[Dict[str, Any]] = {},
         save_frequency: int = 1,
-        save_dir: str = ('./meta_policy_weights'),
+        meta_weights_dir: str = ('./meta_policy_weights'),
+        tensorboard_logs: Optional[str] = './inner_loop_logs',
         experience_name: str = '',
         ):
         assert hasattr(rl_algorithm, 'learn'), f'RL algorithm needs a .learn() method to train inner loop.'
@@ -73,7 +74,7 @@ class ReptileAgent:
         self.use_actor_meta_weights = use_actor_meta_weights
 
         #TODO: if no task generator
-        self.meta_algo = self.instanciate_model(self.task_generator.get_task(0)[0])
+        self.meta_algo = self.instanciate_model(self.task_generator.get_task(0)[0], False)
         self.task_generator.reset_history()
         self.meta_policy = self.meta_algo.policy #ActorCriticPolicy
         self.meta_optimizer = meta_optimizer(
@@ -94,16 +95,18 @@ class ReptileAgent:
             f"Layers to ignored during meta-learning stage not found in the RL algorithm: {unmatched_layers}"
         )
 
-        self.save_dir = save_dir
-        self.experience_name = get_unique_experience_name(experience_name, self.save_dir)
-        print(f"Meta-weights saved at: {self.save_dir} under the name: {self.experience_name}")
+        self.meta_weights_dir = meta_weights_dir
+        self.experience_name = get_unique_experience_name(experience_name, self.meta_weights_dir)
+        self.tensorboard_logs = os.path.join(tensorboard_logs,self.experience_name)
+        print(f"Meta-weights saved at: {self.meta_weights_dir}")
+        print(f"Inner-loop logs saved at: {self.tensorboard_logs}")
 
         print(f"Total number of timesteps in the env is: {outer_steps*inner_steps:_}")
 
     def save_meta_weights(self, meta_iteration: int):
-        save_dir = os.path.join(self.save_dir, self.experience_name)
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"meta_policy_step_{meta_iteration + 1}.pth")
+        meta_weights_dir = os.path.join(self.meta_weights_dir, self.experience_name)
+        os.makedirs(meta_weights_dir, exist_ok=True)
+        save_path = os.path.join(meta_weights_dir, f"meta_policy_step_{meta_iteration + 1}.pth")
         th.save(self.meta_policy.state_dict(), save_path)
     
     def get_model_parameters_from_name(self, target_layers):
@@ -122,9 +125,11 @@ class ReptileAgent:
     def instanciate_task_generator(self):
         return self.task_generator_cls(**self.tasks_generator_params)
 
-    def instanciate_model(self, task):
+    def instanciate_model(self, task, inner):
         policy = self.rl_algo_kwargs.get('policy', 'MlpPolicy')
         algo_kwargs = {k: v for k, v in self.rl_algo_kwargs.items() if k != 'policy'}
+        if inner and self.tensorboard_logs is not None:
+            algo_kwargs['tensorboard_log'] = self.tensorboard_logs
         return self.rl_algorithm(env=task, policy=policy, **algo_kwargs)
         
     def check_tasks_homogeneity(self):
@@ -265,7 +270,7 @@ class ReptileAgent:
             for current_task, task_info, first_occurence in task_batch:                
                 # 1. load meta weights into task specific model
                 exclude_layers = []
-                task_model = self.instanciate_model(current_task)
+                task_model = self.instanciate_model(current_task, True)
 
                 if not self.use_actor_meta_weights and self.actor_layers:
                     # we exclude actor weights from initialization (use random weights)
