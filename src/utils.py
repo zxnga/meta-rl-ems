@@ -1,5 +1,6 @@
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Tuple
 
+import math
 import os
 import torch
 from torch.nn import Module
@@ -114,3 +115,27 @@ def extract_layer_weights(
         }
 
     return layer_weights
+
+def compute_updates(model, inner_steps: int) -> Tuple[int, int, int]:
+    """
+    Params:
+      model: instanciated SB3 model
+      inner_steps: Reptile inner loop steps
+    Returns:
+      updates_per_rollout: number of gradient updates SB3 does per rollout
+      total_updates:      number of gradient updates over `inner_steps` env steps
+      n_rollouts: number of rollouts over inner_steps
+    """
+    n_steps    = model.n_steps
+    n_envs     = model.env.num_envs   # VecEnv always has this attribute
+    batch_size = model.batch_size
+    n_epochs   = model.n_epochs
+
+    # only full mini-batches are used per epoch
+    updates_per_rollout = (n_steps * n_envs) // batch_size * n_epochs
+
+    # how many rollouts to reach `inner_steps` 
+    n_rollouts = math.ceil(inner_steps / n_steps)
+
+    total_updates = updates_per_rollout * n_rollouts
+    return updates_per_rollout, total_updates, n_rollouts

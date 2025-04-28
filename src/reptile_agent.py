@@ -14,7 +14,8 @@ from .task_generator import TaskGenerator
 from .utils import (
     get_unique_experience_name,
     load_weights_from_source,
-    extract_layer_weights)
+    extract_layer_weights,
+    compute_updates)
 
 
 class ReptileAgent:
@@ -35,6 +36,7 @@ class ReptileAgent:
         use_meta_optimizer: bool = False,
         meta_optimizer: th.optim = th.optim.Adam,
         inner_loop_params: Optional[Dict[str, Any]] = {},
+        split_rollout_updates: bool = True,
         save_frequency: int = 1,
         meta_weights_dir: str = ('./meta_policy_weights'),
         tensorboard_logs: Optional[str] = './inner_loop_logs',
@@ -43,13 +45,15 @@ class ReptileAgent:
         assert hasattr(rl_algorithm, 'learn'), f'RL algorithm needs a .learn() method to train inner loop.'
         assert task_batch_size > 0, f"task_batch_size must be > 0, got {task_batch_size}"
         assert not re_use_actors or actor_layers, "actor_layers is required when re_use_actors is True"
-        if 'n_steps' in rl_algo_kwargs:
-            if 'n_steps' in rl_algo_kwargs and inner_steps > rl_algo_kwargs['n_steps']:
-                print(f"Warning inner_steps({inner_steps}) > n_steps({rl_algo_kwargs['n_steps']}) ! A supplementary round of updates will be done.")
-                rl_algo_kwargs['n_steps'] = inner_steps
-            else:
-                rl_algo_kwargs['n_steps'] = inner_steps
-            rl_algo_kwargs['n_steps'] = inner_steps      
+        
+        if not split_rollout_updates:
+            print(f"Using a single giant rollout of {inner_steps} env steps per update.")
+            rl_algo_kwargs['n_steps'] = inner_steps
+        elif inner_steps < rl_algo_kwargs['n_steps']:
+            print(
+                f"Warning: inner_steps ({inner_steps}) < n_steps ({rl_algo_kwargs['n_steps']}). "
+                "Only one partial rollout will be done."
+            )
 
         self.task_generator_cls = tasks_generator_cls
         self.tasks_generator_params = tasks_generator_params
@@ -83,6 +87,14 @@ class ReptileAgent:
         self.use_meta_optimizer = use_meta_optimizer
         self.save_frequency = save_frequency
 
+        # meta model is essentially the same as the inner loop models
+        self.updates_per_rollout, self.total_updates, self.n_rollouts = compute_updates(
+            self.meta_algo, inner_steps)
+        print(
+            f"Number of gradient updates per inner loop: {self.total_updates:_} "
+            f"({self.updates_per_rollout:_} per rollout * {self.n_rollouts:_} rollouts)"
+        )
+
         self.gradient_norms = np.zeros(outer_steps)
         self.parameter_trajectory = np.zeros((outer_steps, sum(p.numel() for p in self.meta_policy.parameters())))
         self.layer_trajectories = {
@@ -101,7 +113,7 @@ class ReptileAgent:
         print(f"Meta-weights saved at: {self.meta_weights_dir}")
         print(f"Inner-loop logs saved at: {self.tensorboard_logs}")
 
-        print(f"Total number of timesteps in the env is: {outer_steps*inner_steps:_}")
+        print(f"Total number of timesteps in the env across outer loop is: {outer_steps*inner_steps:_}")
 
     def save_meta_weights(self, meta_iteration: int):
         meta_weights_dir = os.path.join(self.meta_weights_dir, self.experience_name)
