@@ -17,6 +17,8 @@ from .utils import (
     extract_layer_weights,
     compute_updates)
 
+# TODO: anneal outer step size
+
 
 class ReptileAgent:
     def __init__(
@@ -33,7 +35,7 @@ class ReptileAgent:
         task_batch_size: int = 1,
         rl_algo_kwargs: Optional[Dict[str, Any]] = {},
         ignored_layers: List[str] = [], # layers of the rl_algorithm to ignore when updating the meta model parameters
-        use_meta_optimizer: bool = False,
+        use_meta_optimizer: bool = True,
         meta_optimizer: th.optim = th.optim.Adam,
         inner_loop_params: Optional[Dict[str, Any]] = {},
         split_rollout_updates: bool = True,
@@ -46,18 +48,16 @@ class ReptileAgent:
         assert task_batch_size > 0, f"task_batch_size must be > 0, got {task_batch_size}"
         assert not re_use_actors or actor_layers, "actor_layers is required when re_use_actors is True"
         
+        n_steps = self.rl_algo_kwargs.get('n_steps')
         if not split_rollout_updates:
             print(f"Using a single giant rollout of {inner_steps} env steps per update.")
             rl_algo_kwargs['n_steps'] = inner_steps
-        elif inner_steps < rl_algo_kwargs['n_steps']:
-            print(
-                f"Warning: inner_steps ({inner_steps}) < n_steps ({rl_algo_kwargs['n_steps']}). "
-                "Only one partial rollout will be done."
-            )
+        elif n_steps is not None and self.inner_steps < n_steps:
+            print(f"Warning: inner_steps ({self.inner_steps}) < n_steps ({n_steps}). Only one partial rollout will be done.")
 
         self.task_generator_cls = tasks_generator_cls
         self.tasks_generator_params = tasks_generator_params
-        self.task_generator = self.instanciate_task_generator()
+        self.task_generator = self.instantiate_task_generator()
 
         self.inner_steps = inner_steps
         self.inner_loop_params = inner_loop_params
@@ -69,7 +69,6 @@ class ReptileAgent:
             self.outer_steps = math.ceil(outer_steps / task_batch_size)
             print(f'Carefull ! Task_batch_size > 1. Total number of outer loop steps are: {prev_outer_steps}/{task_batch_size}={self.outer_steps} !')
             
-
         self.rl_algorithm = rl_algorithm
         self.rl_algo_kwargs = rl_algo_kwargs
         self.ignored_layers = ignored_layers
@@ -78,16 +77,18 @@ class ReptileAgent:
         self.use_actor_meta_weights = use_actor_meta_weights
 
         #TODO: if no task generator
-        self.meta_algo = self.instanciate_model(self.task_generator.get_task(0)[0], False)
+        self.meta_algo = self.instantiate_model(self.task_generator.get_task(0)[0], False)
         self.task_generator.reset_history()
         self.meta_policy = self.meta_algo.policy #ActorCriticPolicy
-        self.meta_optimizer = meta_optimizer(
-            self.meta_policy.parameters(),
-            lr=self.meta_lr)
         self.use_meta_optimizer = use_meta_optimizer
+        if use_meta_optimizer:
+            self.meta_optimizer = meta_optimizer(
+                self.meta_policy.parameters(),
+                lr=self.meta_lr)
         self.save_frequency = save_frequency
 
         # meta model is essentially the same as the inner loop models
+        # TODO: modify for off_policy updates as well
         self.updates_per_rollout, self.total_updates, self.n_rollouts = compute_updates(
             self.meta_algo, inner_steps)
         print(
@@ -95,10 +96,10 @@ class ReptileAgent:
             f"({self.updates_per_rollout:_} per rollout * {self.n_rollouts:_} rollouts)"
         )
 
-        self.gradient_norms = np.zeros(outer_steps)
-        self.parameter_trajectory = np.zeros((outer_steps, sum(p.numel() for p in self.meta_policy.parameters())))
+        self.gradient_norms = np.zeros(self.outer_steps)
+        self.parameter_trajectory = np.zeros((self.outer_steps, sum(p.numel() for p in self.meta_policy.parameters())))
         self.layer_trajectories = {
-            name: np.zeros((outer_steps, param.numel()))
+            name: np.zeros((self.outer_steps, param.numel()))
             for name, param in self.meta_policy.named_parameters()
         }
 
@@ -113,7 +114,7 @@ class ReptileAgent:
         print(f"Meta-weights saved at: {self.meta_weights_dir}")
         print(f"Inner-loop logs saved at: {self.tensorboard_logs}")
 
-        print(f"Total number of timesteps in the env across outer loop is: {outer_steps*inner_steps:_}")
+        print(f"Total number of timesteps in the env across outer loop is: {self.outer_steps*inner_steps:_}")
 
     def save_meta_weights(self, meta_iteration: int):
         meta_weights_dir = os.path.join(self.meta_weights_dir, self.experience_name)
@@ -134,10 +135,11 @@ class ReptileAgent:
 
         return target_parameters, unmatched_layers
 
-    def instanciate_task_generator(self):
+    def instantiate_task_generator(self):
         return self.task_generator_cls(**self.tasks_generator_params)
 
-    def instanciate_model(self, task, inner):
+    def instantiate_model(self, task, inner):
+        # maybe use .set_env instead that can be quicker (reset buffers for off policy, cast parameters to meta model params)
         policy = self.rl_algo_kwargs.get('policy', 'MlpPolicy')
         algo_kwargs = {k: v for k, v in self.rl_algo_kwargs.items() if k != 'policy'}
         if inner and self.tensorboard_logs is not None:
@@ -161,47 +163,39 @@ class ReptileAgent:
         # Get original meta-parameters
         original_params = self.meta_policy.state_dict()
 
-        # Initialize a dictionary to store the accumulated differences
-        accumulated_deltas = {name: th.zeros_like(param, device=param.device) for name, param in original_params.items()}
+        accumulated_deltas = {
+            name: th.zeros_like(param, device=param.device)
+            for name, param in original_params.items()
+        }
 
-        # Accumulate the parameter differences for each task in the batch
+        # Accumulate the parameter deltas for each task in the batch
         for task_model in task_models:
             task_params = task_model.policy.state_dict()
             for name in original_params:
-                # Accumulate the difference for this parameter
-                if name in self.ignored_params:  # Skip ignored layers
+                if name in self.ignored_params: # Skip ignored layers
                     continue
-                if self.use_meta_optimizer and isinstance(self.meta_optimizer, th.optim.Optimizer):
-                    accumulated_deltas[name] += (original_params[name] - task_params[name])
-                else:
-                    accumulated_deltas[name] += (task_params[name] - original_params[name]) / self.task_batch_size
+                accumulated_deltas[name] += (task_params[name] - original_params[name]) /self.task_batch_size
 
-        # If using a meta-optimizer, apply the averaged update as pseudo-gradients
-        if self.use_meta_optimizer and isinstance(self.meta_optimizer, th.optim.Optimizer):
-            self.meta_optimizer.zero_grad()  # Reset gradients
-
-            # Set each parameter's gradient as the averaged difference
+        # Using a meta-optimizer
+        if self.use_meta_optimizer:
+            self.meta_optimizer.zero_grad()
             for name, param in self.meta_policy.named_parameters():
-                if name in accumulated_deltas and name not in self.ignored_params:  # Skip ignored layers:
-                    param.grad = accumulated_deltas[name].detach()  # Set pseudo-gradient
-
-            # Apply the meta-update with the meta-optimizer
+                if name in accumulated_deltas and name not in self.ignored_params: # Skip ignored layers
+                    # -1 * accumulated_deltas = original_params - task_params
+                    param.grad = -(accumulated_deltas[name]).detach()
             self.meta_optimizer.step()
 
         else:
             # Directly apply the update without a meta-optimizer
-            updated_params = {}
-            for name, param in self.meta_policy.named_parameters():
-                if name in accumulated_deltas and name not in self.ignored_params:  # Skip ignored layers:
-                    # Update each parameter using the averaged difference
-                    updated_params[name] = (param + self.meta_lr * accumulated_deltas[name]).detach()
-
-            # Load the updated parameters back into the meta-policy
-            self.meta_policy.load_state_dict(updated_params)
+            with th.no_grad():
+                for name, param in self.meta_policy.named_parameters():
+                    if name in accumulated_deltas and name not in self.ignored_params: # Skip ignored layers
+                        param.add_(self.meta_lr * accumulated_deltas[name])
 
     def update_to_task(self, task_model):
         task_model.learn(self.inner_steps, **self.inner_loop_params)
 
+    #TODO modify to limit memory foorpint + track stats instead of whole trajactories
     def track_parameter_trajectory(self, meta_iteration):
         """
         Record the current parameters of the model at each meta-iteration.
@@ -209,19 +203,8 @@ class ReptileAgent:
         # Flatten and store all parameters into a single vector for each meta-iteration
         params = np.concatenate([param.data.cpu().numpy().flatten() for param in self.meta_policy.parameters()])
         self.parameter_trajectory[meta_iteration] = params
-
-    def track_gradient_norm(self, meta_iteration):
-        """
-        Calculate and track the norm of the gradients of the meta-policy's parameters.
-        """
-        total_norm = 0
-        for param in self.meta_policy.parameters():
-            if param.grad is not None:
-                param_norm = param.grad.data.norm(2)  # L2
-                total_norm += param_norm.item() ** 2
-        total_norm = total_norm ** 0.5
-        self.gradient_norms[meta_iteration] = total_norm
     
+    #TODO modify to limit memory foorpint + track stats instead of whole trajactories
     def track_layer_parameters_trajectory(self, meta_iteration):
         """
         Track parameters of each layer at each meta-iteration.
@@ -229,6 +212,24 @@ class ReptileAgent:
         # Store parameters for each layer dynamically
         for name, param in self.meta_policy.named_parameters():
             self.layer_trajectories[name][meta_iteration] = param.data.cpu().numpy().flatten()
+
+    def track_gradient_norm(self, meta_iteration, deltas=None):
+        """
+        Track gradient norm of meta-policy (real or pseudo).
+
+        track_gradient_norm(meta_iteration) if using the optimizer, or
+        track_gradient_norm(meta_iteration, accumulated_deltas) if not.
+        """
+        if deltas is not None:
+            total_norm = np.sqrt(sum((d.detach().cpu().norm(2).item()) ** 2 for d in deltas.values()))
+        else:
+            total_norm = 0
+            for param in self.meta_policy.parameters():
+                if param.grad is not None:
+                    param_norm = param.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+        self.gradient_norms[meta_iteration] = total_norm
 
     def reduce_parameter_trajectory(self, method='pca', dimensions=2):
         """
@@ -282,7 +283,7 @@ class ReptileAgent:
             for current_task, task_info, first_occurence in task_batch:                
                 # 1. load meta weights into task specific model
                 exclude_layers = []
-                task_model = self.instanciate_model(current_task, True)
+                task_model = self.instantiate_model(current_task, True)
 
                 if not self.use_actor_meta_weights and self.actor_layers:
                     # we exclude actor weights from initialization (use random weights)

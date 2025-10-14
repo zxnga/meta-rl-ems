@@ -63,13 +63,22 @@ def load_weights_from_source(
 
     target_state_dict = target_model.state_dict()
     if detach:
-        filtered_state_dict = {k: v.clone().detach() for k, v in source_state_dict.items() if k not in exclude_layers}
+        filtered_state_dict = {
+            k: v.clone().detach()
+            for k, v in source_state_dict.items()
+            if not any(k.startswith(layer if layer.endswith('.') else layer + '.') 
+                    for layer in exclude_layers)
+        }
     else:
-        filtered_state_dict = {k: v.clone() for k, v in source_state_dict.items() if k not in exclude_layers}
-
+        filtered_state_dict = {
+            k: v.clone()
+            for k, v in source_state_dict.items()
+            if not any(k.startswith(layer if layer.endswith('.') else layer + '.') 
+                    for layer in exclude_layers)
+        }
     for name, param in filtered_state_dict.items():
         if name in target_state_dict and target_state_dict[name].shape == param.shape:
-            target_state_dict[name] = param
+            target_state_dict[name].copy_(param)
         else:
             print(f"Skipping layer: {name} (shape mismatch or missing in target)")
     target_model.load_state_dict(target_state_dict)
@@ -113,6 +122,9 @@ def extract_layer_weights(
             for k, v in state_dict.items()
             if any(k.startswith(name) for name in layer_name_list)
         }
+    
+    if not layer_weights:
+        print(f"[Warning] No parameters found for layers {layer_name_list}")
 
     return layer_weights
 
@@ -125,11 +137,13 @@ def compute_updates(model, inner_steps: int) -> Tuple[int, int, int]:
       updates_per_rollout: number of gradient updates SB3 does per rollout
       total_updates:      number of gradient updates over `inner_steps` env steps
       n_rollouts: number of rollouts over inner_steps
+
+      #TODO: modify for off_policy updates as well
     """
     n_steps    = model.n_steps
     n_envs     = model.env.num_envs   # VecEnv always has this attribute
     batch_size = model.batch_size
-    n_epochs   = model.n_epochs
+    n_epochs = getattr(model, "n_epochs", 1)
 
     # only full mini-batches are used per epoch
     updates_per_rollout = (n_steps * n_envs) // batch_size * n_epochs
