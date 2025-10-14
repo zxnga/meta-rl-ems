@@ -8,7 +8,7 @@ Original REPTILE update is without an optimizer is:
 ```
 \phi = \phi + \epsilon(\phi' - \phi)
      = (1 - \epsilon) \phi + \epsilon \phi'
-```,
+```
 
 with `\phi` the meta-parameters and `\phi'` the inner-loop task optimized parameters.
 So here we see that the deltas are accumulated using `(\phi' - \phi)`.
@@ -23,7 +23,7 @@ pluging our gradient we get:
 ```
 \phi = \phi - \epsilon(\phi - \phi')
      = (1 - \epsilon) \phi + \epsilon \phi'
-```.
+```
 
 We get the same exact update but we can now use any optimizers like Adam for example.
 Using this method the deltas are accululated as `(\phi - \phi')`.
@@ -33,6 +33,7 @@ We can still accumulate the gradient as `(\phi' - \phi)` by modifying the sign t
 ```
 \phi = \phi - ( -\epsilon(\phi' - \phi) )
      = \phi + \epsilon \phi' - \espilon \phi
-     = (1 - \epsilon) \phi + \epsilon \phi'```.
+     = (1 - \epsilon) \phi + \epsilon \phi'
+```
 
 
